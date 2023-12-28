@@ -1,0 +1,46 @@
+version: '3.9'
+
+services:
+  www:
+    build: apps/www
+    ports:
+      - '3000:3000'
+    volumes:
+      - './:/app'
+    depends_on:
+      - 'api'
+  api:
+    build: apps/api
+    ports:
+      - '3001:3001'
+    volumes:
+      - './:/app'
+    depends_on:
+      - 'redis'
+      - 'mongo'
+      - 'postgres'
+  redis:
+    image: 'redis:alpine'
+    ports:
+      - '6379:6379'
+  mongo:
+    image: mongo
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=example
+      - MONGO_INITDB_DATABASE=warcats
+    ports:
+      - '27017:27017'
+    volumes:
+      - '/data:/data'
+  postgres:
+    image: postgres:14.1-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5432:5432'
+    volumes:
+      - /postgres:/var/lib/postgresql/data
