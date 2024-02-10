@@ -1,7 +1,7 @@
 import {INestApplication} from '@nestjs/common';
 import {Test} from '@nestjs/testing';
 import {io} from 'socket.io-client';
-import {AppModule} from '../app/app.module';
+import {AppModule} from '../app/module/app.module';
 
 jest.setTimeout(30000);
 

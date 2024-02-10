@@ -1,23 +1,48 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { IRedisProvider } from '../redis/warcats.redis';
+import {Inject, Injectable} from '@nestjs/common';
+import {InjectConnection, InjectModel} from '@nestjs/mongoose';
+import {Model} from 'mongoose';
+import {IRedisProvider} from '../redis/warcats.redis';
 import {
   IGame,
   BuildingTeam,
   Unit,
   IPlayer,
-  IBuilding,
   Building,
   MapPosition,
   canWalkAt,
   getUnitCost,
-  BuildingPath,
-  Game,
   victoryTimeout,
+  BuildingPath,
+  UnitPath,
+  IUnit,
+  UnitTeam,
 } from 'warcats-common';
-import { makeUnit } from './warcats.matching.service';
 import * as mongoose from 'mongoose';
+import {Socket} from 'socket.io';
+import {IGameMatch} from '../schema/game_match.schema';
+
+export const startingGold = 1000;
+
+const makeBuilding = (path: BuildingPath, pos: number[]) => {
+  const position = new MapPosition();
+  position.x = pos[0];
+  position.y = pos[1];
+  return {path, position, health: 10, didSpawn: false};
+};
+
+const makeUnit = (path: UnitPath, pos: number[], didMove: boolean) => {
+  const position = new MapPosition();
+  position.x = pos[0];
+  position.y = pos[1];
+
+  return {
+    path: path,
+    position,
+    didMove,
+    health: 10,
+    fuel: 100,
+  } as IUnit;
+};
 
 @Injectable()
 export class WarCatsGameService {
@@ -25,6 +50,7 @@ export class WarCatsGameService {
     @Inject('REDIS')
     private readonly redis: IRedisProvider,
     @InjectModel('Game') private gameModel: Model<IGame>,
+    @InjectModel('GameMatch') private gameMatchModel: Model<IGameMatch>,
     @InjectConnection() private readonly connection: mongoose.Connection,
   ) {}
 
@@ -34,7 +60,7 @@ export class WarCatsGameService {
 
   async getReturnFromSession(callback: () => Promise<any>): Promise<any> {
     const session = await this.connection.startSession();
-    let ret: { otherSocketId: string; response: any } | number = 0;
+    let ret: {otherSocketId: string; response: any} | number = 0;
     await session.withTransaction(async () => (ret = await callback()));
     await session.endSession();
 
@@ -44,13 +70,111 @@ export class WarCatsGameService {
     return ret;
   }
 
+  async addToMatching(socket: Socket, wallet: string, warcatTokenId: number) {
+    return this.getReturnFromSession(async () => {
+      await this.gameMatchModel.create({
+        wallet,
+        warcatTokenId,
+        searchTime: Date.now(),
+      });
+
+      const searches = await this.gameMatchModel.find({}).sort({searchTime: 1});
+
+      console.log('found searches', searches);
+      for (const search of searches) {
+        if (search.wallet != wallet) {
+          console.log('creating game', search.wallet, wallet);
+          const game = await this.createGame(
+            search.wallet,
+            wallet,
+            search.warcatTokenId,
+            warcatTokenId,
+          );
+          await this.gameMatchModel.deleteOne({wallet, warcatTokenId});
+          await this.gameMatchModel.deleteOne({
+            wallet: search.wallet,
+            warcatTokenId: search.warcatTokenId,
+          });
+          return game;
+        }
+      }
+
+      return null;
+    });
+  }
+
+  async createGame(
+    player1Wallet: string,
+    player2Wallet: string,
+    player1WarcatTokenId: number,
+    player2WarcatTokenId: number,
+  ) {
+    const buildings = [
+      makeBuilding(BuildingPath.GreyB2, [1, 3]),
+      makeBuilding(BuildingPath.RedB4, [1, 5]),
+      makeBuilding(BuildingPath.GreyB1, [2, 6]),
+      makeBuilding(BuildingPath.RedB3, [3, 7]),
+      makeBuilding(BuildingPath.GreyB2, [4, 5]),
+      makeBuilding(BuildingPath.GreyB2, [5, 8]),
+      makeBuilding(BuildingPath.GreyB2, [2, 3]),
+      makeBuilding(BuildingPath.GreyB2, [9, 4]),
+      makeBuilding(BuildingPath.GreyB2, [12, 8]),
+      makeBuilding(BuildingPath.GreyB2, [13, 8]),
+      makeBuilding(BuildingPath.PurpleB4, [13, 3]),
+      makeBuilding(BuildingPath.GreyB1, [12, 2]),
+      makeBuilding(BuildingPath.PurpleB3, [11, 1]),
+      makeBuilding(BuildingPath.GreyB2, [13, 5]),
+      makeBuilding(BuildingPath.GreyB2, [11, 4]),
+      makeBuilding(BuildingPath.GreyB2, [9, 2]),
+    ];
+    const units = [
+      makeUnit(UnitPath.RedInf1, [4, 3], false),
+      makeUnit(UnitPath.RedInf1, [5, 7], false),
+      makeUnit(UnitPath.RedTank2, [3, 6], false),
+      makeUnit(UnitPath.RedWarCat, [3, 5], false),
+      makeUnit(UnitPath.PurpleInf1, [9, 2], false),
+      makeUnit(UnitPath.PurpleInf1, [10, 5], false),
+      makeUnit(UnitPath.PurpleTank2, [11, 2], false),
+      makeUnit(UnitPath.PurpleWarCat, [11, 3], false),
+    ];
+
+    const player1 = {
+      wallet: player1Wallet,
+      team: UnitTeam.Red,
+      warcatTokenId: player1WarcatTokenId,
+      gold: startingGold,
+    };
+    const player2 = {
+      wallet: player2Wallet,
+      team: UnitTeam.Purple,
+      warcatTokenId: player2WarcatTokenId,
+      gold: startingGold,
+    };
+
+    try {
+      const game = await this.gameModel.create({
+        turn: UnitTeam.Red,
+        player1,
+        player2,
+        buildings,
+        units,
+        gameOver: false,
+        lastMoveTime: new Date().getTime(),
+      });
+      return game;
+    } catch (e: any) {
+      console.error(e);
+      throw e;
+    }
+  }
+
   async findActiveGame(wallet: string, warcatTokenId: number | null) {
     return this.getReturnFromSession(async () => {
       const game = await this.gameModel.findOne({
         gameOver: false,
         $or: [
-          { 'player1.warcatTokenId': warcatTokenId },
-          { 'player2.warcatTokenId': warcatTokenId },
+          {'player1.warcatTokenId': warcatTokenId},
+          {'player2.warcatTokenId': warcatTokenId},
         ],
       });
 
@@ -72,6 +196,12 @@ export class WarCatsGameService {
           game.player2.wallet = wallet;
           await game.save();
         }
+
+        if (game.player1.wallet == game.player2.wallet) {
+          game.gameOver = true;
+          await game.save();
+          return null;
+        }
       }
 
       return game;
@@ -82,7 +212,7 @@ export class WarCatsGameService {
     wallet: string,
     gameId: string,
     unitId: string,
-    position: { x: number; y: number },
+    position: {x: number; y: number},
   ) {
     return this.getReturnFromSession(async () => {
       const game = await this.gameModel.findById(gameId);
@@ -107,19 +237,19 @@ export class WarCatsGameService {
       }
 
       await this.gameModel.findOneAndUpdate(
-        { 'units._id': unitId },
+        {'units._id': unitId},
         {
           $set: {
             'units.$[t].position': position,
             'units.$[t].didMove': true,
           },
         },
-        { arrayFilters: [{ 't._id': unitId }] },
+        {arrayFilters: [{'t._id': unitId}]},
       );
 
       return {
         otherSocketId: game.getOpposingPlayerOfWallet(wallet).wallet,
-        response: { unitId, position },
+        response: {unitId, position},
       };
     });
   }
@@ -139,21 +269,28 @@ export class WarCatsGameService {
       const timeSinceMove = new Date().getTime() - game.lastMoveTime;
       const victory = timeSinceMove > victoryTimeout;
       if (victory) {
-        const updatedGame = await this.gameModel.updateOne({
-          _id: game._id, 
-        }, {
-          $set: {
-            gameOver: true
-          }
-        })
-        console.log("wrote game over from declare victory", game._id, updatedGame)
+        const updatedGame = await this.gameModel.updateOne(
+          {
+            _id: game._id,
+          },
+          {
+            $set: {
+              gameOver: true,
+            },
+          },
+        );
+        console.log(
+          'wrote game over from declare victory',
+          game._id,
+          updatedGame,
+        );
       }
 
       const winningWallet = victory ? wallet : null;
 
       return {
         otherSocketId: game.getOpposingPlayerOfWallet(wallet).wallet,
-        response: { victory, winningWallet },
+        response: {victory, winningWallet},
       };
     });
   }
@@ -162,7 +299,7 @@ export class WarCatsGameService {
     wallet: string,
     gameId: string,
     unitId: string,
-    position: { x: number; y: number },
+    position: {x: number; y: number},
   ) {
     return this.getReturnFromSession(async () => {
       const game = await this.gameModel.findById(gameId);
@@ -253,34 +390,34 @@ export class WarCatsGameService {
     );
 
     await this.gameModel.findOneAndUpdate(
-      { 'units._id': attackingUnit._id },
+      {'units._id': attackingUnit._id},
       {
         $set: {
           'units.$[t].didMove': true,
           'units.$[t].position': newPosition,
         },
       },
-      { arrayFilters: [{ 't._id': attackingUnit._id }] },
+      {arrayFilters: [{'t._id': attackingUnit._id}]},
     );
     if (newHealth <= 0) {
       await this.gameModel.findOneAndUpdate(
-        { 'units._id': attackedUnit._id },
+        {'units._id': attackedUnit._id},
         {
           $pull: {
-            units: { _id: attackedUnit._id },
+            units: {_id: attackedUnit._id},
           },
         },
-        { new: true },
+        {new: true},
       );
     } else {
       await this.gameModel.findOneAndUpdate(
-        { 'units._id': attackedUnit._id },
+        {'units._id': attackedUnit._id},
         {
           $set: {
             'units.$[t].health': newHealth,
           },
         },
-        { arrayFilters: [{ 't._id': attackedUnit._id }] },
+        {arrayFilters: [{'t._id': attackedUnit._id}]},
       );
     }
 
@@ -289,7 +426,7 @@ export class WarCatsGameService {
 
     if (winningWallet != null) {
       await this.gameModel.findOneAndUpdate(
-        { _id: game._id },
+        {_id: game._id},
         {
           $set: {
             gameOver: true,
@@ -353,14 +490,14 @@ export class WarCatsGameService {
         attackingUnit,
       );
       await this.gameModel.findOneAndUpdate(
-        { 'units._id': attackingUnit._id },
+        {'units._id': attackingUnit._id},
         {
           $set: {
             'units.$[t].didMove': true,
             'units.$[t].position': newPosition,
           },
         },
-        { arrayFilters: [{ 't._id': attackingUnit._id }] },
+        {arrayFilters: [{'t._id': attackingUnit._id}]},
       );
       const attackedPath = attackedBuilding.path.replace(
         'grey',
@@ -412,14 +549,14 @@ export class WarCatsGameService {
       );
 
       await this.gameModel.findOneAndUpdate(
-        { 'units._id': attackingUnit._id },
+        {'units._id': attackingUnit._id},
         {
           $set: {
             'units.$[t].didMove': true,
             'units.$[t].position': newPosition,
           },
         },
-        { arrayFilters: [{ 't._id': attackingUnit._id }] },
+        {arrayFilters: [{'t._id': attackingUnit._id}]},
       );
       if (newHealth <= 0) {
         const newPath = attackedBuilding.path
@@ -457,13 +594,13 @@ export class WarCatsGameService {
         };
       } else {
         await this.gameModel.findOneAndUpdate(
-          { 'buildings._id': attackedBuilding._id },
+          {'buildings._id': attackedBuilding._id},
           {
             $set: {
               'buildings.$[t].health': newHealth,
             },
           },
-          { arrayFilters: [{ 't._id': attackedBuilding._id }] },
+          {arrayFilters: [{'t._id': attackedBuilding._id}]},
         );
         return {
           eventName: 'attacked_building',

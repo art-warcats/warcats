@@ -15,7 +15,6 @@ import {Server, Socket} from 'socket.io';
 import {getWarCatTokenIds, IGame} from 'warcats-common';
 import {IRedisProvider} from '../redis/warcats.redis';
 import {WarCatsGameService} from '../service/warcats.game.service';
-import {WarCatsMatchingService} from '../service/warcats.matching.service';
 import {verifyADR36AminoSignDoc, Bech32Address} from '@keplr-wallet/cosmos';
 import {PubKeySecp256k1} from '@keplr-wallet/crypto';
 
@@ -57,7 +56,6 @@ export class WarCatsGateway
   constructor(
     @Inject('REDIS')
     private readonly redis: IRedisProvider,
-    private readonly warcatMatchingService: WarCatsMatchingService,
     private readonly warcatGameService: WarCatsGameService,
   ) {}
   afterInit(server: Server) {
@@ -87,7 +85,7 @@ export class WarCatsGateway
     @MessageBody('account') account: any,
     @MessageBody('signature') signature: string,
     @MessageBody('signed') signed: string,
-  ): Promise<WsResponse<IGame>> {
+  ): Promise<WsResponse<any>> {
     isValidSignature(wallet, signed, signature, account);
     await this.registerWalletToSocket(socket, wallet);
     const nfts: any[] = await getWarCatTokenIds(wallet);
@@ -101,17 +99,27 @@ export class WarCatsGateway
       warcatTokenId,
     );
     if (maybeGame != null) {
-      console.log("returning cached game", maybeGame._id)
+      console.log('returning cached game', maybeGame._id);
       return {event: 'found_game', data: maybeGame};
     }
 
-    const game = await this.warcatMatchingService.addToMatchmaking(
+    console.log('adding to matching');
+    const game = await this.warcatGameService.addToMatching(
       socket,
       wallet,
       warcatTokenId,
     );
-    console.log('got game id with ', game._id);
-    return {event: 'found_game', data: game};
+    if (game != null) {
+      console.log('got game id with ', game._id);
+      await this.transmitEventToOtherSocket(
+        game.getOpposingPlayerOfWallet(wallet).wallet,
+        'found_game',
+        game,
+      );
+      return {event: 'found_game', data: game};
+    }
+
+    return {event: 'looking_for_player', data: {}};
   }
 
   @SubscribeMessage('move_unit')
