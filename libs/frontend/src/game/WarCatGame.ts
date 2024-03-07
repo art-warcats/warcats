@@ -38,6 +38,7 @@ import {getWarCatMetadata, WalletInfo} from '../hooks';
 import {GameOverPanel} from './sprites/GameOverPanel';
 import {OptionsPanel} from './ui/OptionsPanel';
 import {DeclareVictoryPanel} from './ui/DeclareVictoryPanel';
+import {LookingForPlayerPanel} from './sprites/LookingForPlayerPanel';
 
 export class WarCatGame {
   static createInstance(scene: Scene, warcatTokenId: number) {
@@ -64,6 +65,7 @@ export class WarCatGame {
   optionsPanel: OptionsPanel | null = null;
   declareVictoryPanel: DeclareVictoryPanel | null = null;
   managerMap: SpriteManager | null = null;
+  lookingForPlayerPanel: LookingForPlayerPanel | null = null;
 
   constructor(readonly scene: Scene, readonly warcatTokenId: number) {
     this.init();
@@ -77,6 +79,7 @@ export class WarCatGame {
     this.uiTexture.useSmallestIdeal = true;
     this.uiTexture.idealWidth = GAME_WIDTH;
     this.uiTexture.idealHeight = GAME_HEIGHT;
+    this.lookingForPlayerPanel = new LookingForPlayerPanel(this);
   }
 
   private init() {
@@ -130,6 +133,11 @@ export class WarCatGame {
   }
 
   async populateGameData(game: Game) {
+    if (this.lookingForPlayerPanel != null) {
+      this.lookingForPlayerPanel.dispose();
+      this.lookingForPlayerPanel = null;
+    }
+
     console.error(
       WalletInfo.getInstance()!.wallet,
       game.player1.wallet,

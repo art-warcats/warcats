@@ -1,7 +1,8 @@
 import {INestApplication} from '@nestjs/common';
 import {Test} from '@nestjs/testing';
+import {IGame} from '@warcats/common';
 import {io} from 'socket.io-client';
-import {AppModule} from '../app/app.module';
+import {AppModule} from '../app/module/app.module';
 
 jest.setTimeout(30000);
 
@@ -18,36 +19,36 @@ describe('WarCatsGateway', () => {
   });
 
   describe('root', () => {
-    // const numUsers = 100;
-    // it(`${numUsers} players should find a unique match`, async () => {
-    //   const sockets = Array(numUsers).fill(0);
-    //   console.log('connecting');
-    //   const responses = await Promise.all(
-    //     sockets.map(async (num, i) => {
-    //       const socket = io('http://localhost:3000');
-    //       console.log('added socket lister');
-    //       socket.emit('find_game', { wallet: 'hello', signed: 'hi' });
-    //       const response = await new Promise<GameDocument>((resolve) => {
-    //         socket.on('found_game', (data: GameDocument) => {
-    //           console.log('got data', data);
-    //           socket.close();
-    //           resolve(data);
-    //         });
-    //       });
-    //       socket.close();
-    //       return response;
-    //     }),
-    //   );
-    //   console.log({ responses });
-    //   for (const response of responses) {
-    //     expect(
-    //       responses
-    //         .map((game) => game._id)
-    //         .filter((res2) => res2 == response._id).length,
-    //     ).toBe(2);
-    //     console.log(JSON.stringify(response, null, 2));
-    //   }
-    // });
+    const numUsers = 100;
+    it(`${numUsers} players should find a unique match`, async () => {
+      const sockets = Array(numUsers).fill(0);
+      console.log('connecting');
+      const responses = await Promise.all(
+        sockets.map(async (num, i) => {
+          const socket = io('http://localhost:3000');
+          console.log('added socket lister');
+          socket.emit('find_game', {wallet: 'hello', signed: 'hi'});
+          const response = await new Promise<IGame>((resolve) => {
+            socket.on('found_game', (data) => {
+              console.log('got data', data);
+              socket.close();
+              resolve(data);
+            });
+          });
+          socket.close();
+          return response;
+        }),
+      );
+      console.log({responses});
+      for (const response of responses) {
+        expect(
+          responses
+            .map((game) => game._id)
+            .filter((res2) => res2 == response._id).length,
+        ).toBe(2);
+        console.log(JSON.stringify(response, null, 2));
+      }
+    });
   });
 
   //   describe('test', () => {
